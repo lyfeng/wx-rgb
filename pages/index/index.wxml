@@ -1,0 +1,111 @@
+<view class="container">
+  <view class="header">
+    <text class="title">颜色识别器</text>
+  </view>
+  
+  <view class="main-content">
+    <!-- 图片预览区域 -->
+    <view class="image-preview">
+      <image wx:if="{{tempImagePath}}" 
+             src="{{tempImagePath}}" 
+             mode="{{isZoomed ? 'widthFix' : 'aspectFit'}}" 
+             bindtap="handleImageTap"
+             bindtouchstart="touchStart"
+             bindtouchmove="touchMove"
+             bindtouchend="touchEnd"
+             style="{{selectionStyle}}"></image>
+      
+      <!-- 简化的遮罩层实现 -->
+      <view wx:if="{{tempImagePath && isSelecting}}" class="selection-overlay">
+        <view class="overlay-top" style="height: {{selectionTop}}px;"></view>
+        <view class="overlay-middle">
+          <view class="overlay-left" style="width: {{selectionLeft}}px;"></view>
+          <view class="selection-area" style="width: {{selectionWidth}}px; height: {{selectionHeight}}px;"></view>
+          <view class="overlay-right" style="width: calc(100% - {{selectionLeft + selectionWidth}}px);"></view>
+        </view>
+        <view class="overlay-bottom" style="height: calc(100% - {{selectionTop + selectionHeight}}px);"></view>
+      </view>
+      
+      <view wx:if="{{tempImagePath && isSelecting}}" class="selection-box" style="{{selectionBoxStyle}}">
+        <text wx:if="{{Math.abs(endX - startX) > 50 && Math.abs(endY - startY) > 50}}" 
+              style="color: white; font-size: 12px; text-shadow: 0 0 2px black;">
+          正在选择区域
+        </text>
+      </view>
+      
+      <!-- 长按提示 -->
+      <view wx:if="{{tempImagePath && !isSelecting}}" class="long-press-hint">
+        <text>长按图片并拖动可框选区域识别颜色</text>
+      </view>
+      
+      <view wx:if="{{tempImagePath && selectionMode === 'area' && !isSelecting}}" class="selection-hint">
+        <text>长按并拖动以框选区域</text>
+      </view>
+      <view wx:else class="placeholder">
+        <text>请上传或拍摄图片</text>
+      </view>
+      
+      <!-- 添加放大缩小控制按钮 -->
+      <view wx:if="{{tempImagePath}}" class="zoom-controls">
+        <view class="zoom-btn zoom-in" bindtap="zoomIn">
+          <text>+</text>
+        </view>
+        <view class="zoom-btn zoom-out" bindtap="zoomOut">
+          <text>-</text>
+        </view>
+      </view>
+    </view>
+    
+    <!-- 操作按钮区域 -->
+    <view class="action-buttons">
+      <button class="btn" bindtap="chooseImage">选择图片</button>
+      <button class="btn" bindtap="takePhoto">拍摄照片</button>
+    </view>
+    
+    <!-- 选中区域颜色信息 -->
+    <view class="selected-color" wx:if="{{selectedColor}}">
+      <text class="section-title">选中颜色</text>
+      <view class="color-item">
+        <view class="color-block" style="background-color: {{selectedColor.hex}}"></view>
+        <view class="color-info">
+          <text class="color-hex" bindtap="copyText" data-text="{{selectedColor.hex}}">{{selectedColor.hex}}</text>
+          <text class="color-rgb" bindtap="copyText" data-text="{{selectedColor.rgb}}">{{selectedColor.rgb}}</text>
+          <text wx:if="{{selectedColor.name}}" class="color-name" bindtap="copyText" data-text="{{selectedColor.name}}">{{selectedColor.name}}</text>
+        </view>
+      </view>
+    </view>
+    
+    <!-- 合并后的颜色结果展示区域 -->
+    <view class="color-results" wx:if="{{colorResults.length > 0 || selectionColors.length > 0}}">
+      <text class="section-title">{{selectionColors.length > 0 ? '框选区域颜色' : '识别结果'}}</text>
+      
+      <!-- 框选颜色结果 -->
+      <view class="colors-container" wx:if="{{selectionColors.length > 0}}">
+        <view class="color-item" wx:for="{{selectionColors}}" wx:key="index">
+          <view class="color-rank">{{index + 1}}</view>
+          <view class="color-block" style="background-color: {{item.color}}"></view>
+          <view class="color-info">
+            <text class="color-hex" bindtap="copyText" data-text="{{item.color}}">{{item.color}}</text>
+            <text wx:if="{{item.rgb}}" class="color-rgb" bindtap="copyText" data-text="{{item.rgb}}">{{item.rgb}}</text>
+            <text class="color-percentage">占比: {{item.percentage}}%</text>
+          </view>
+        </view>
+      </view>
+      
+      <!-- 普通识别颜色结果 -->
+      <view class="colors-container" wx:else>
+        <view class="color-item" wx:for="{{colorResults}}" wx:key="index">
+          <view class="color-block" style="background-color: {{item.hex}}"></view>
+          <view class="color-info">
+            <text class="color-hex" bindtap="copyText" data-text="{{item.hex}}">{{item.hex}}</text>
+            <text class="color-rgb" bindtap="copyText" data-text="{{item.rgb}}">{{item.rgb}}</text>
+            <text wx:if="{{item.name}}" class="color-name" bindtap="copyText" data-text="{{item.name}}">{{item.name}}</text>
+            <text wx:if="{{item.percentage}}" class="color-percentage">占比: {{item.percentage}}%</text>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>
+
+<canvas canvas-id="colorCanvas" id="colorCanvas" type="2d" style="width: 300px; height: 300px; position: absolute; left: -9999px; top: -9999px;"></canvas>
