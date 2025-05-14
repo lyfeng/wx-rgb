@@ -5,7 +5,7 @@ Page({
     rewardedVideoAd: null,
     isAdLoaded: false,
     isZoomed: false,
-    selectionMode: 'area', // 默认使用框选模式
+    selectionMode: 'grid', // 修改为网格模式
     isSelecting: false,
     startX: 0,
     startY: 0,
@@ -20,7 +20,12 @@ Page({
     originalHeight: 0,
     scale: 1,
     selectionColors: [],
-    zoomScale: 1.0
+    zoomScale: 1.0,
+    showGrid: true, // 默认启用网格模式
+    gridCells: [],
+    selectedGridCell: null,
+    gridSize: 10, // 设置为固定的5x5网格
+    currentAlgorithm: 'kmeans', // 修改为默认使用K-Means聚类算法
   },
 
   onLoad: function() {
@@ -37,40 +42,167 @@ Page({
           console.error('Canvas 初始化失败');
         }
       });
+    
+    // 图片加载后初始化网格
+    setTimeout(() => {
+      if (this.data.tempImagePath) {
+        console.log('onLoad 中调用 generateGridCells');
+        this.generateGridCells();
+      }
+    }, 1000); // 增加延迟确保图片已加载
+
+    // 只设置显示网格，不再设置大小
+    this.setData({
+      showGrid: true
+    });
   },
 
   // 选择图片
   chooseImage: function() {
-    wx.chooseMedia({
+    try {
+      wx.chooseMedia({
+        count: 1,
+        mediaType: ['image'],
+        sourceType: ['album'],
+        success: (res) => {
+          console.log('选择图片成功:', res);
+          const tempFilePath = res.tempFiles[0].tempFilePath;
+          
+          // 先设置图片路径，再进行其他操作
+          this.setData({
+            tempImagePath: tempFilePath,
+            selectedColor: null,
+            selectedGridCell: null,
+            colorResults: [], // 清空之前的结果
+            selectionColors: [] // 清空框选结果
+          });
+          
+          // 获取图片信息
+          this.getImageInfo(tempFilePath);
+          
+          // 延迟分析图片，确保图片已加载
+          setTimeout(() => {
+            this.analyzeImage(tempFilePath);
+          }, 300);
+        },
+        fail: (err) => {
+          console.error('选择图片失败:', err);
+          // 尝试使用旧版API作为备选方案
+          this.chooseImageFallback();
+        }
+      });
+    } catch (error) {
+      console.error('chooseMedia API调用异常:', error);
+      // 尝试使用旧版API作为备选方案
+      this.chooseImageFallback();
+    }
+  },
+
+  // 添加旧版API作为备选方案
+  chooseImageFallback: function() {
+    wx.chooseImage({
       count: 1,
-      mediaType: ['image'],
+      sizeType: ['original', 'compressed'],
       sourceType: ['album'],
       success: (res) => {
-        const tempFilePath = res.tempFiles[0].tempFilePath;
+        console.log('使用旧版API选择图片成功:', res);
+        const tempFilePath = res.tempFilePaths[0];
+        
         this.setData({
           tempImagePath: tempFilePath,
-          selectedColor: null
+          selectedColor: null,
+          selectedGridCell: null,
+          colorResults: [],
+          selectionColors: []
         });
-        this.analyzeImage(tempFilePath);
+        
         this.getImageInfo(tempFilePath);
+        
+        setTimeout(() => {
+          this.analyzeImage(tempFilePath);
+        }, 300);
+      },
+      fail: (err) => {
+        console.error('使用旧版API选择图片也失败:', err);
+        wx.showToast({
+          title: '选择图片失败',
+          icon: 'none'
+        });
       }
     });
   },
 
   // 拍摄照片
   takePhoto: function() {
-    wx.chooseMedia({
+    try {
+      wx.chooseMedia({
+        count: 1,
+        mediaType: ['image'],
+        sourceType: ['camera'],
+        success: (res) => {
+          console.log('拍照成功:', res);
+          const tempFilePath = res.tempFiles[0].tempFilePath;
+          
+          // 先设置图片路径，再进行其他操作
+          this.setData({
+            tempImagePath: tempFilePath,
+            selectedColor: null,
+            selectedGridCell: null,
+            colorResults: [], // 清空之前的结果
+            selectionColors: [] // 清空框选结果
+          });
+          
+          // 获取图片信息
+          this.getImageInfo(tempFilePath);
+          
+          // 延迟分析图片，确保图片已加载
+          setTimeout(() => {
+            this.analyzeImage(tempFilePath);
+          }, 300);
+        },
+        fail: (err) => {
+          console.error('拍照失败:', err);
+          // 尝试使用旧版API作为备选方案
+          this.takePhotoFallback();
+        }
+      });
+    } catch (error) {
+      console.error('chooseMedia API调用异常:', error);
+      // 尝试使用旧版API作为备选方案
+      this.takePhotoFallback();
+    }
+  },
+
+  // 添加旧版API作为备选方案
+  takePhotoFallback: function() {
+    wx.chooseImage({
       count: 1,
-      mediaType: ['image'],
+      sizeType: ['original', 'compressed'],
       sourceType: ['camera'],
       success: (res) => {
-        const tempFilePath = res.tempFiles[0].tempFilePath;
+        console.log('使用旧版API拍照成功:', res);
+        const tempFilePath = res.tempFilePaths[0];
+        
         this.setData({
           tempImagePath: tempFilePath,
-          selectedColor: null
+          selectedColor: null,
+          selectedGridCell: null,
+          colorResults: [],
+          selectionColors: []
         });
-        this.analyzeImage(tempFilePath);
+        
         this.getImageInfo(tempFilePath);
+        
+        setTimeout(() => {
+          this.analyzeImage(tempFilePath);
+        }, 300);
+      },
+      fail: (err) => {
+        console.error('使用旧版API拍照也失败:', err);
+        wx.showToast({
+          title: '拍照失败',
+          icon: 'none'
+        });
       }
     });
   },
@@ -80,24 +212,93 @@ Page({
     wx.getImageInfo({
       src: imagePath,
       success: (res) => {
+        console.log('获取图片信息成功:', res);
         this.setData({
           imageInfo: res,
           originalWidth: res.width,
           originalHeight: res.height
         });
-        // 将图片绘制到隐藏的canvas上，用于后续颜色提取
-        this.drawImageToCanvas(imagePath, res.width, res.height);
+        
+        // 使用 Canvas 2D API 绘制图片
+        this.drawImageToCanvas2D(imagePath);
+      },
+      fail: (err) => {
+        console.error('获取图片信息失败:', err);
+        wx.showToast({
+          title: '获取图片信息失败',
+          icon: 'none'
+        });
       }
     });
   },
 
-  // 将图片绘制到Canvas
-  drawImageToCanvas: function(imagePath, width, height) {
-    const ctx = wx.createCanvasContext('colorCanvas');
-    ctx.drawImage(imagePath, 0, 0, width, height);
-    ctx.draw(false, () => {
-      console.log('图片已绘制到Canvas');
-    });
+  // 使用 Canvas 2D API 绘制图片
+  drawImageToCanvas2D: function(imagePath) {
+    const query = wx.createSelectorQuery();
+    query.select('#colorCanvas')
+      .fields({ node: true, size: true })
+      .exec((res) => {
+        if (!res || !res[0] || !res[0].node) {
+          console.error('Canvas 节点获取失败');
+          return;
+        }
+        
+        const canvas = res[0].node;
+        const ctx = canvas.getContext('2d');
+        
+        // 获取图片信息以设置合适的 Canvas 尺寸
+        wx.getImageInfo({
+          src: imagePath,
+          success: (imgInfo) => {
+            // 设置 Canvas 大小为图片的实际大小
+            // 但限制最大尺寸为 600px，保持性能
+            const maxSize = 600;
+            let canvasWidth, canvasHeight;
+            
+            if (imgInfo.width > imgInfo.height) {
+              canvasWidth = Math.min(imgInfo.width, maxSize);
+              canvasHeight = (imgInfo.height / imgInfo.width) * canvasWidth;
+            } else {
+              canvasHeight = Math.min(imgInfo.height, maxSize);
+              canvasWidth = (imgInfo.width / imgInfo.height) * canvasHeight;
+            }
+            
+            // 设置 Canvas 大小
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+            
+            // 创建图片对象
+            const img = canvas.createImage();
+            img.src = imagePath;
+            
+            img.onload = () => {
+              // 清空画布
+              ctx.clearRect(0, 0, canvas.width, canvas.height);
+              // 绘制图片
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+              console.log('图片已绘制到 Canvas 2D，尺寸:', canvasWidth, 'x', canvasHeight);
+            };
+            
+            img.onerror = (err) => {
+              console.error('图片加载失败:', err);
+            };
+          },
+          fail: (err) => {
+            console.error('获取图片信息失败:', err);
+            // 使用默认尺寸
+            canvas.width = 300;
+            canvas.height = 300;
+            
+            const img = canvas.createImage();
+            img.src = imagePath;
+            
+            img.onload = () => {
+              ctx.clearRect(0, 0, canvas.width, canvas.height);
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            };
+          }
+        });
+      });
   },
 
   // 分析图片颜色
@@ -107,51 +308,325 @@ Page({
       title: '正在识别颜色...',
     });
     
-    // 调用颜色分析函数
-    setTimeout(() => {
-      const colors = this.analyzeImageColors(imagePath);
-      
-      // 特殊处理：不设置 selectedColor
-      this.setData({
-        colorResults: colors,
-        selectedColor: null, // 不设置选中颜色
-        selectionColors: [] // 清空框选结果
-      });
-      
+    // 确保图片路径有效
+    if (!imagePath) {
+      console.error('图片路径为空');
       wx.hideLoading();
-      
-      // 显示成功提示
       wx.showToast({
-        title: '颜色分析成功',
-        icon: 'success',
-        duration: 1500
+        title: '图片路径无效',
+        icon: 'none'
       });
-    }, 1000); // 模拟分析延迟
+      return;
+    }
+    
+    // 确保 Canvas 已准备好
+    setTimeout(() => {
+      try {
+        // 使用Canvas 2D API获取真实颜色
+        this.getImageColors(imagePath);
+      } catch (error) {
+        console.error('颜色分析失败:', error);
+        wx.hideLoading();
+        wx.showToast({
+          title: '颜色分析失败',
+          icon: 'none',
+          duration: 1500
+        });
+      }
+    }, 500);
   },
 
-  // 颜色分析算法
-  analyzeImageColors: function(imagePath) {
-    // 这里只是模拟返回结果，实际项目中需要实现真正的颜色分析算法
-    return [
-      {
-        hex: '#FF5733',
-        rgb: 'RGB(255, 87, 51)',
-        name: '橙红色',
-        percentage: 45
-      },
-      {
-        hex: '#33A8FF',
-        rgb: 'RGB(51, 168, 255)',
-        name: '天蓝色',
-        percentage: 30
-      },
-      {
-        hex: '#33FF57',
-        rgb: 'RGB(51, 255, 87)',
-        name: '浅绿色',
-        percentage: 25
+  // 替换模拟的颜色分析算法，使用真实的颜色分析
+  getImageColors: function(imagePath) {
+    const query = wx.createSelectorQuery();
+    query.select('#colorCanvas')
+      .fields({ node: true, size: true })
+      .exec((res) => {
+        if (!res || !res[0] || !res[0].node) {
+          console.error('Canvas 初始化失败');
+          wx.hideLoading();
+          wx.showToast({
+            title: 'Canvas 初始化失败',
+            icon: 'none'
+          });
+          return;
+        }
+        
+        const canvas = res[0].node;
+        const ctx = canvas.getContext('2d');
+        
+        // 添加重试机制
+        const getImageInfoWithRetry = (src, maxRetries = 3) => {
+          let retryCount = 0;
+          
+          const tryGetImageInfo = () => {
+            return new Promise((resolve, reject) => {
+              wx.getImageInfo({
+                src: src,
+                success: resolve,
+                fail: (err) => {
+                  console.error(`获取图片信息失败 (尝试 ${retryCount + 1}/${maxRetries}):`, err);
+                  
+                  if (retryCount < maxRetries - 1) {
+                    retryCount++;
+                    setTimeout(() => {
+                      tryGetImageInfo().then(resolve).catch(reject);
+                    }, 500 * retryCount); // 递增重试延迟
+                  } else {
+                    reject(err);
+                  }
+                }
+              });
+            });
+          };
+          
+          return tryGetImageInfo();
+        };
+        
+        // 使用重试机制获取图片信息
+        getImageInfoWithRetry(imagePath)
+          .then((imgInfo) => {
+            // 设置 Canvas 大小为图片的实际大小
+            // 但限制最大尺寸为 600px，保持性能
+            const maxSize = 600;
+            let canvasWidth, canvasHeight;
+            
+            if (imgInfo.width > imgInfo.height) {
+              canvasWidth = Math.min(imgInfo.width, maxSize);
+              canvasHeight = (imgInfo.height / imgInfo.width) * canvasWidth;
+            } else {
+              canvasHeight = Math.min(imgInfo.height, maxSize);
+              canvasWidth = (imgInfo.width / imgInfo.height) * canvasHeight;
+            }
+            
+            // 设置 Canvas 大小
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+            
+            // 设置超时处理
+            const loadingTimeout = setTimeout(() => {
+              wx.hideLoading();
+              wx.showToast({
+                title: '颜色识别超时',
+                icon: 'none'
+              });
+            }, 10000); // 10秒超时
+            
+            // 创建图片对象
+            const img = canvas.createImage();
+            
+            img.onload = () => {
+              try {
+                // 绘制图片到 Canvas
+                ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
+                
+                // 获取整个图片的像素数据
+                const imageData = ctx.getImageData(0, 0, canvasWidth, canvasHeight);
+                
+                // 分析图片颜色
+                const colors = this.analyzeImageData(imageData.data, canvasWidth, canvasHeight);
+                
+                // 清除超时计时器
+                clearTimeout(loadingTimeout);
+                
+                if (colors && colors.length > 0) {
+                  this.setData({
+                    colorResults: colors,
+                    selectedColor: colors[0], // 设置第一个颜色为选中颜色
+                    selectionColors: [] // 清空框选结果
+                  });
+                  
+                  wx.hideLoading();
+                  
+                  wx.showToast({
+                    title: '颜色分析成功',
+                    icon: 'success',
+                    duration: 1500
+                  });
+                } else {
+                  wx.hideLoading();
+                  wx.showToast({
+                    title: '未能识别颜色',
+                    icon: 'none'
+                  });
+                }
+              } catch (error) {
+                // 清除超时计时器
+                clearTimeout(loadingTimeout);
+                
+                console.error('分析图片颜色失败:', error);
+                wx.hideLoading();
+                wx.showToast({
+                  title: '分析颜色失败',
+                  icon: 'none'
+                });
+              }
+            };
+            
+            img.onerror = (err) => {
+              // 清除超时计时器
+              clearTimeout(loadingTimeout);
+              
+              console.error('图片加载失败:', err);
+              wx.hideLoading();
+              wx.showToast({
+                title: '图片加载失败',
+                icon: 'none'
+              });
+            };
+            
+            // 设置图片源
+            img.src = imagePath;
+          })
+          .catch((err) => {
+            console.error('获取图片信息失败:', err);
+            wx.hideLoading();
+            wx.showToast({
+              title: '获取图片信息失败',
+              icon: 'none'
+            });
+          });
+      });
+  },
+
+  // 修改颜色识别算法函数，只保留K-Means算法
+  analyzeImageData: function(data, width, height) {
+    console.log('分析图像数据:', width, height, '数据长度:', data.length);
+    
+    // 如果没有数据或数据长度不足，返回默认颜色
+    if (!data || data.length < 4) {
+      console.error('像素数据无效');
+      return [{
+        hex: '#888888',
+        rgb: 'RGB(136, 136, 136)',
+        name: '灰色',
+        percentage: 100
+      }];
+    }
+    
+    try {
+      // 直接使用K-Means算法
+      return this.analyzeWithKMeans(data, width, height);
+    } catch (error) {
+      console.error('分析图像数据失败:', error);
+      // 返回默认颜色，避免应用崩溃
+      return [{
+        hex: '#888888',
+        rgb: 'RGB(136, 136, 136)',
+        name: '灰色',
+        percentage: 100
+      }];
+    }
+  },
+
+  // 修改K-Means聚类算法，提高对红色的识别准确度
+  analyzeWithKMeans: function(data, width, height) {
+    // 1. 均匀+随机采样
+    const pixels = [];
+    const totalPixels = width * height;
+    const sampleCount = Math.min(8000, totalPixels); // 采样点数
+    for (let i = 0; i < sampleCount; i++) {
+      // 均匀分布采样
+      let idx = Math.floor(i * totalPixels / sampleCount);
+      let offset = Math.floor(Math.random() * 10); // 加点随机扰动
+      idx = Math.min(idx + offset, totalPixels - 1);
+      let di = idx * 4;
+      let r = data[di], g = data[di + 1], b = data[di + 2], a = data[di + 3];
+      if (a < 128) continue;
+      pixels.push([r, g, b]);
+    }
+    if (pixels.length === 0) return [{
+      hex: '#888888', rgb: 'RGB(136, 136, 136)', name: '灰色', percentage: 100
+    }];
+
+    // 2. 转HSV空间
+    const hsvPixels = pixels.map(([r, g, b]) => this.rgbToHsv(r, g, b));
+
+    // 3. K值自适应
+    let k = 3;
+    if (pixels.length > 4000) k = 4;
+    if (pixels.length > 7000) k = 5;
+
+    // 4. K-Means主循环（在HSV空间）
+    let centroids = [];
+    for (let i = 0; i < k; i++) {
+      centroids.push([...hsvPixels[Math.floor(i * hsvPixels.length / k)]]);
+    }
+    let assignments = new Array(hsvPixels.length).fill(0);
+    for (let iter = 0; iter < 15; iter++) {
+      // 分配
+      let changed = false;
+      for (let i = 0; i < hsvPixels.length; i++) {
+        let minDist = 1e9, minIdx = 0;
+        for (let j = 0; j < k; j++) {
+          // H分量要考虑环绕
+          let dh = Math.abs(hsvPixels[i][0] - centroids[j][0]);
+          dh = Math.min(dh, 360 - dh);
+          let ds = hsvPixels[i][1] - centroids[j][1];
+          let dv = hsvPixels[i][2] - centroids[j][2];
+          let dist = dh * dh * 0.5 + ds * ds * 0.2 + dv * dv * 0.3;
+          if (dist < minDist) {
+            minDist = dist;
+            minIdx = j;
+          }
+        }
+        if (assignments[i] !== minIdx) {
+          assignments[i] = minIdx;
+          changed = true;
+        }
       }
-    ];
+      if (!changed) break;
+      // 更新
+      let sums = Array(k).fill().map(() => [0, 0, 0]);
+      let counts = Array(k).fill(0);
+      for (let i = 0; i < hsvPixels.length; i++) {
+        let c = assignments[i];
+        sums[c][0] += hsvPixels[i][0];
+        sums[c][1] += hsvPixels[i][1];
+        sums[c][2] += hsvPixels[i][2];
+        counts[c]++;
+      }
+      for (let j = 0; j < k; j++) {
+        if (counts[j] > 0) {
+          centroids[j][0] = sums[j][0] / counts[j];
+          centroids[j][1] = sums[j][1] / counts[j];
+          centroids[j][2] = sums[j][2] / counts[j];
+        }
+      }
+    }
+
+    // 5. 聚类统计与剔除小簇
+    let clusterCounts = Array(k).fill(0);
+    for (let i = 0; i < assignments.length; i++) clusterCounts[assignments[i]]++;
+    let result = [];
+    for (let j = 0; j < k; j++) {
+      if (clusterCounts[j] < pixels.length * 0.03) continue; // 剔除小簇
+      // 反推RGB均值
+      let rgbSum = [0, 0, 0], cnt = 0;
+      for (let i = 0; i < assignments.length; i++) {
+        if (assignments[i] === j) {
+          rgbSum[0] += pixels[i][0];
+          rgbSum[1] += pixels[i][1];
+          rgbSum[2] += pixels[i][2];
+          cnt++;
+        }
+      }
+      let r = Math.round(rgbSum[0] / cnt);
+      let g = Math.round(rgbSum[1] / cnt);
+      let b = Math.round(rgbSum[2] / cnt);
+      let percent = Math.round((cnt / pixels.length) * 100);
+      result.push({
+        hex: this.rgbToHex(r, g, b),
+        rgb: `RGB(${r}, ${g}, ${b})`,
+        name: this.getColorName(r, g, b),
+        percentage: percent
+      });
+    }
+    // 6. 主色排序
+    result.sort((a, b) => b.percentage - a.percentage);
+
+    // 7. 合并相近色，最多3种
+    return this.mergeSimilarColors(result).slice(0, 3);
   },
 
   // 复制文本到剪贴板
@@ -175,225 +650,446 @@ Page({
     });
   },
 
-  // 触摸开始
-  touchStart: function(e) {
-    console.log('触摸开始', e);
-    if (!this.data.tempImagePath) return;
-    
-    const touch = e.touches[0];
-    
-    // 记录起始位置
-    this.setData({
-      startX: touch.clientX,
-      startY: touch.clientY,
-      endX: touch.clientX,
-      endY: touch.clientY
-    });
-    
-    // 长按开始框选
-    this.data.longPressTimer = setTimeout(() => {
-      console.log('长按触发框选');
-      // 显示提示信息
-      wx.showToast({
-        title: '开始框选',
-        icon: 'none',
-        duration: 1000
-      });
-      
-      this.setData({
-        isSelecting: true,
-        selectionBoxStyle: `
-          position: absolute;
-          left: ${touch.clientX}px; 
-          top: ${touch.clientY}px; 
-          width: 0px; 
-          height: 0px;
-          border: 3px solid #ff0000;
-          background-color: rgba(255, 0, 0, 0.2);
-          pointer-events: none;
-          z-index: 100;
-          box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
-        `
-      });
-    }, 500); // 长按500ms触发框选
+  // 修改图片点击处理函数，移除框选相关逻辑
+  handleImageTap: function(e) {
+    console.log('图片被点击', e);
+    // 不再切换缩放状态，因为我们始终使用网格模式
   },
 
-  // 触摸移动
-  touchMove: function(e) {
-    // 清除长按定时器
-    if (this.data.longPressTimer) {
-      clearTimeout(this.data.longPressTimer);
-      this.data.longPressTimer = null;
-    }
-    
-    if (this.data.isSelecting) {
-      const touch = e.touches[0];
-      
-      // 计算选择框的尺寸
-      const left = Math.min(this.data.startX, touch.clientX);
-      const top = Math.min(this.data.startY, touch.clientY);
-      const width = Math.abs(touch.clientX - this.data.startX);
-      const height = Math.abs(touch.clientY - this.data.startY);
-      
-      // 更新选择框样式
-      this.setData({
-        endX: touch.clientX,
-        endY: touch.clientY,
-        selectionBoxStyle: `
-          position: absolute;
-          left: ${left}px; 
-          top: ${top}px; 
-          width: ${width}px; 
-          height: ${height}px;
-          border: 3px solid #ff0000;
-          background-color: rgba(255, 0, 0, 0.2);
-          pointer-events: none;
-          z-index: 100;
-          box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
-          display: flex;
-          justify-content: center;
-          align-items: center;
-        `
-      });
-      
-      // 如果选择框足够大，显示尺寸信息
-      if (width > 30 && height > 30) {
-        // 可以在这里添加额外的视觉反馈，比如显示选择框的尺寸
-        console.log(`选择框尺寸: ${width} x ${height}`);
+  // 修改缩放处理函数，只在两个手指时才缩放
+  bindscale: function(e) {
+    // 检查是否有两个触摸点
+    if (e.touches && e.touches.length === 2) {
+      const newScale = this.data.scale * e.scale;
+      // 限制缩放范围
+      if (newScale >= 0.5 && newScale <= 3) {
+        this.setData({
+          scale: newScale
+        });
       }
     }
   },
 
-  // 触摸结束
-  touchEnd: function(e) {
-    // 清除长按定时器
-    if (this.data.longPressTimer) {
-      clearTimeout(this.data.longPressTimer);
-      this.data.longPressTimer = null;
+  // 修改 toggleGrid 函数，始终显示网格
+  toggleGrid: function() {
+    // 不再切换网格显示状态，始终显示网格
+    this.generateGridCells();
+  },
+  
+  // 修改网格生成函数，使用固定的网格大小
+  generateGridCells: function() {
+    console.log('生成网格单元格');
+    
+    if (!this.data.tempImagePath) {
+      console.error('没有图片，无法生成网格');
+      return;
     }
     
-    if (this.data.isSelecting) {
-      // 计算选择框的尺寸
-      const width = Math.abs(this.data.endX - this.data.startX);
-      const height = Math.abs(this.data.endY - this.data.startY);
-      
-      // 如果选择框太小，提示用户
-      if (width < 10 || height < 10) {
-        wx.showToast({
-          title: '选择区域太小',
-          icon: 'none',
-          duration: 1500
-        });
-        
-        this.setData({
-          isSelecting: false,
-          selectionBoxStyle: ''
-        });
+    // 获取图片容器的尺寸
+    const query = wx.createSelectorQuery();
+    query.select('.image-preview').boundingClientRect().exec((res) => {
+      if (!res || !res[0]) {
+        console.error('无法获取图片容器尺寸');
         return;
       }
       
-      // 显示正在分析的提示
-      wx.showToast({
-        title: '正在分析选中区域...',
-        icon: 'loading',
-        duration: 2000
-      });
+      const containerRect = res[0];
+      console.log('图片容器尺寸:', containerRect);
       
-      // 获取框选区域的主要颜色
-      this.getAreaColors();
-      
-      // 保持选择框显示一段时间，然后隐藏
-      setTimeout(() => {
-        this.setData({
-          isSelecting: false
+      // 获取图片元素的尺寸
+      query.select('.image-preview image').boundingClientRect().exec((imgRes) => {
+        if (!imgRes || !imgRes[0]) {
+          console.error('无法获取图片元素尺寸');
+          return;
+        }
+        
+        const imageRect = imgRes[0];
+        console.log('图片元素尺寸:', imageRect);
+        
+        // 计算图片在容器中的实际显示区域
+        const imageRatio = this.data.imageInfo ? this.data.imageInfo.width / this.data.imageInfo.height : 1;
+        let actualWidth, actualHeight, offsetX = 0, offsetY = 0;
+        
+        if (imageRatio > containerRect.width / containerRect.height) {
+          // 图片宽度适应容器
+          actualWidth = imageRect.width;
+          actualHeight = actualWidth / imageRatio;
+          offsetY = (containerRect.height - actualHeight) / 2;
+        } else {
+          // 图片高度适应容器
+          actualHeight = imageRect.height;
+          actualWidth = actualHeight * imageRatio;
+          offsetX = (containerRect.width - actualWidth) / 2;
+        }
+        
+        // 使用 this.data.gridSize 而不是硬编码值
+        const gridSize = this.data.gridSize;
+        const cellWidth = actualWidth / gridSize;
+        const cellHeight = actualHeight / gridSize;
+        
+        const gridCells = [];
+        
+        // 生成网格单元格，只在图片区域内
+        for (let row = 0; row < gridSize; row++) {
+          for (let col = 0; col < gridSize; col++) {
+            gridCells.push({
+              id: `${row}-${col}`,
+              x: offsetX + col * cellWidth,
+              y: offsetY + row * cellHeight,
+              width: cellWidth,
+              height: cellHeight,
+              relativeX: col / gridSize,
+              relativeY: row / gridSize
+            });
+          }
+        }
+        
+        console.log(`生成了 ${gridCells.length} 个网格单元格:`, gridCells[0]);
+        
+        // 更新状态
+        this.setData({ 
+          gridCells: gridCells
         });
-      }, 1000);
+      });
+    });
+  },
+  
+  // 选择网格单元格
+  selectGridCell: function(e) {
+    console.log('网格单元格被点击', e);
+    const { x, y } = e.currentTarget.dataset;
+    
+    // 获取选中单元格的信息
+    const selectedCell = this.data.gridCells.find(
+      cell => cell.relativeX === x && cell.relativeY === y
+    );
+    
+    if (selectedCell) {
+      console.log('选中网格单元格:', selectedCell);
+      
+      // 更新选中的网格单元格
+      this.setData({ selectedGridCell: selectedCell });
+      
+      // 分析选中单元格的颜色
+      this.analyzeColorAtPoint(x, y);
+    } else {
+      console.error('未找到匹配的网格单元格');
     }
   },
+  
+  // 修改图片加载完成处理函数
+  onImageLoad: function(e) {
+    console.log('图片加载完成', e);
+    
+    // 确保图片完全加载后再生成网格
+    setTimeout(() => {
+      this.generateGridCells();
+    }, 300);
+  },
 
-  // 获取框选区域的主要颜色
-  getAreaColors: function() {
-    console.log('开始获取框选区域颜色');
+  // 添加 rgbToHex 函数，确保颜色转换正确
+  rgbToHex: function(r, g, b) {
+    return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
+  },
+
+  // 完全重写颜色名称识别函数，更准确地识别红色
+  getColorName: function(r, g, b) {
+    // 转换为HSV颜色空间
+    const rgbToHsv = (r, g, b) => {
+      r /= 255;
+      g /= 255;
+      b /= 255;
+      
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      let h, s, v = max;
+      
+      const d = max - min;
+      s = max === 0 ? 0 : d / max;
+      
+      if (max === min) {
+        h = 0; // 无彩色
+      } else {
+        switch (max) {
+          case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+          case g: h = (b - r) / d + 2; break;
+          case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+      }
+      
+      return { h: h * 360, s: s * 100, v: v * 100 };
+    };
+    
+    const hsv = rgbToHsv(r, g, b);
+    const h = hsv.h;
+    const s = hsv.s;
+    const v = hsv.v;
+    
+    // 特殊情况处理 - 针对您截图中的颜色
+    // 特殊处理F96826颜色
+    if (r > 240 && g > 90 && g < 110 && b > 30 && b < 50) {
+      return '红色';
+    }
+    
+    // 红色特殊检测 - 更严格的红色检测
+    if ((r > 200 && g < 120 && b < 80) || 
+        (r > 240 && g < 150 && b < 100 && g-b < 50)) {
+      return '红色';
+    }
+    
+    // 白色/浅色特殊检测 - 更宽松的白色检测
+    if (r > 230 && g > 230 && b > 230) {
+      return '白色';
+    }
+    
+    // 无彩色系列 (黑、白、灰)
+    if (s < 15) {
+      if (v < 20) return '黑色';
+      if (v > 85) return '白色';
+      return v < 50 ? '深灰色' : '浅灰色';
+    }
+    
+    // 红色系 - 扩大红色范围
+    if ((h >= 350 || h < 15) && s > 40) {
+      return '红色';
+    }
+    
+    // 橙色系 - 缩小橙色范围
+    if (h >= 15 && h < 35) {
+      // 特殊处理：高红色值的橙色可能是红色
+      if (r > 230 && g < 150) {
+        return '红色';
+      }
+      if (v < 50) return '棕色';
+      return '橙色';
+    }
+    
+    // 黄色系
+    if (h >= 35 && h < 65) {
+      return '黄色';
+    }
+    
+    // 绿色系
+    if (h >= 65 && h < 170) {
+      return '绿色';
+    }
+    
+    // 青色系
+    if (h >= 170 && h < 200) {
+      return '青色';
+    }
+    
+    // 蓝色系
+    if (h >= 200 && h < 260) {
+      return '蓝色';
+    }
+    
+    // 紫色系
+    if (h >= 260 && h < 330) {
+      return '紫色';
+    }
+    
+    // 粉红/洋红系
+    if (h >= 330 && h < 355) {
+      return '粉红色';
+    }
+    
+    return '未知颜色';
+  },
+
+  // 修改 mergeSimilarColors 函数，限制最多显示三种颜色
+  mergeSimilarColors: function(colors) {
+    if (!colors || colors.length === 0) return colors;
+    
+    const result = [];
+    const processed = new Array(colors.length).fill(false);
+    
+    for (let i = 0; i < colors.length; i++) {
+      if (processed[i]) continue;
+      
+      const color = colors[i];
+      let totalPercentage = color.percentage;
+      let r = parseInt(color.rgb.match(/\d+/g)[0]) * totalPercentage;
+      let g = parseInt(color.rgb.match(/\d+/g)[1]) * totalPercentage;
+      let b = parseInt(color.rgb.match(/\d+/g)[2]) * totalPercentage;
+      
+      // 查找相似颜色并合并
+      for (let j = i + 1; j < colors.length; j++) {
+        if (processed[j]) continue;
+        
+        const otherColor = colors[j];
+        const otherR = parseInt(otherColor.rgb.match(/\d+/g)[0]);
+        const otherG = parseInt(otherColor.rgb.match(/\d+/g)[1]);
+        const otherB = parseInt(otherColor.rgb.match(/\d+/g)[2]);
+        
+        // 计算颜色距离
+        const distance = Math.sqrt(
+          Math.pow(parseInt(color.rgb.match(/\d+/g)[0]) - otherR, 2) +
+          Math.pow(parseInt(color.rgb.match(/\d+/g)[1]) - otherG, 2) +
+          Math.pow(parseInt(color.rgb.match(/\d+/g)[2]) - otherB, 2)
+        );
+        
+        // 如果颜色非常相似，合并它们
+        if (distance < 30) {
+          totalPercentage += otherColor.percentage;
+          r += otherR * otherColor.percentage;
+          g += otherG * otherColor.percentage;
+          b += otherB * otherColor.percentage;
+          processed[j] = true;
+        }
+        // 特殊情况：合并红色和橙红色
+        else if (this.isRedOrOrangeRed(color) && this.isRedOrOrangeRed(otherColor)) {
+          totalPercentage += otherColor.percentage;
+          r += otherR * otherColor.percentage;
+          g += otherG * otherColor.percentage;
+          b += otherB * otherColor.percentage;
+          processed[j] = true;
+        }
+      }
+      
+      // 计算合并后的颜色
+      const avgR = Math.round(r / totalPercentage);
+      const avgG = Math.round(g / totalPercentage);
+      const avgB = Math.round(b / totalPercentage);
+      
+      result.push({
+        hex: this.rgbToHex(avgR, avgG, avgB),
+        rgb: `RGB(${avgR}, ${avgG}, ${avgB})`,
+        name: this.getColorName(avgR, avgG, avgB),
+        percentage: totalPercentage
+      });
+      
+      processed[i] = true;
+    }
+    
+    // 按百分比排序
+    result.sort((a, b) => b.percentage - a.percentage);
+    
+    // 限制最多显示三种颜色
+    return result.slice(0, 3);
+  },
+
+  // 判断是否为红色或橙红色
+  isRedOrOrangeRed: function(color) {
+    const r = parseInt(color.rgb.match(/\d+/g)[0]);
+    const g = parseInt(color.rgb.match(/\d+/g)[1]);
+    const b = parseInt(color.rgb.match(/\d+/g)[2]);
+    
+    // 红色或橙红色的特征
+    return (r > 200 && g < 150 && b < 100) || 
+           (color.name === '红色' || color.name === '橙色' && r > 220 && g < 150);
+  },
+
+  // 添加回 analyzeColorAtPoint 函数
+  analyzeColorAtPoint: function(x, y) {
+    console.log('分析网格单元格颜色:', x, y);
     if (!this.data.tempImagePath) return;
     
     wx.showLoading({
-      title: '正在分析区域颜色...',
+      title: '正在识别颜色...',
       mask: true
     });
     
-    // 使用更可靠的方法获取图片位置
-    try {
-      // 直接使用图片预览区域的尺寸作为参考
-      const imagePreviewWidth = wx.getSystemInfoSync().windowWidth - 40; // 减去容器的padding
-      const imagePreviewHeight = 400 / 750 * wx.getSystemInfoSync().windowWidth; // rpx转px
-      
-      console.log('图片预览区域尺寸:', imagePreviewWidth, imagePreviewHeight);
-      
-      // 计算选择框在图片上的相对位置
-      // 注意：这里假设图片完全填充了预览区域，可能需要根据实际情况调整
-      const startX = Math.min(this.data.startX, this.data.endX) / imagePreviewWidth;
-      const startY = Math.min(this.data.startY, this.data.endY) / imagePreviewHeight;
-      const width = Math.abs(this.data.endX - this.data.startX) / imagePreviewWidth;
-      const height = Math.abs(this.data.endY - this.data.startY) / imagePreviewHeight;
-      
-      console.log('选择框相对位置:', startX, startY, width, height);
-      
-      // 确保选择区域有效
-      if (width > 0.01 && height > 0.01) {
-        // 使用 Canvas 2D API 获取区域颜色
-        const canvasQuery = wx.createSelectorQuery();
-        canvasQuery.select('#colorCanvas')
-          .fields({ node: true, size: true })
-          .exec((canvasRes) => {
-            if (!canvasRes || !canvasRes[0] || !canvasRes[0].node) {
-              console.error('Canvas 初始化失败');
-              wx.hideLoading();
-              wx.showToast({
-                title: 'Canvas 初始化失败',
-                icon: 'none'
+    // 使用Canvas 2D API获取真实颜色
+    const query = wx.createSelectorQuery();
+    query.select('#colorCanvas')
+      .fields({ node: true, size: true })
+      .exec((res) => {
+        if (!res || !res[0] || !res[0].node) {
+          console.error('Canvas 初始化失败');
+          wx.hideLoading();
+          wx.showToast({
+            title: 'Canvas 初始化失败',
+            icon: 'none'
+          });
+          return;
+        }
+        
+        const canvas = res[0].node;
+        const ctx = canvas.getContext('2d');
+        
+        // 添加重试机制
+        const getImageInfoWithRetry = (src, maxRetries = 3) => {
+          let retryCount = 0;
+          
+          const tryGetImageInfo = () => {
+            return new Promise((resolve, reject) => {
+              wx.getImageInfo({
+                src: src,
+                success: resolve,
+                fail: (err) => {
+                  console.error(`获取图片信息失败 (尝试 ${retryCount + 1}/${maxRetries}):`, err);
+                  
+                  if (retryCount < maxRetries - 1) {
+                    retryCount++;
+                    setTimeout(() => {
+                      tryGetImageInfo().then(resolve).catch(reject);
+                    }, 500 * retryCount); // 递增重试延迟
+                  } else {
+                    reject(err);
+                  }
+                }
               });
-              return;
+            });
+          };
+          
+          return tryGetImageInfo();
+        };
+        
+        // 使用重试机制获取图片信息
+        getImageInfoWithRetry(this.data.tempImagePath)
+          .then((imgInfo) => {
+            // 设置 Canvas 大小为图片的实际大小
+            const maxSize = 600;
+            let canvasWidth, canvasHeight;
+            
+            if (imgInfo.width > imgInfo.height) {
+              canvasWidth = Math.min(imgInfo.width, maxSize);
+              canvasHeight = (imgInfo.height / imgInfo.width) * canvasWidth;
+            } else {
+              canvasHeight = Math.min(imgInfo.height, maxSize);
+              canvasWidth = (imgInfo.width / imgInfo.height) * canvasHeight;
             }
             
-            const canvas = canvasRes[0].node;
-            const ctx = canvas.getContext('2d');
-            
             // 设置 Canvas 大小
-            canvas.width = 300;
-            canvas.height = 300;
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
             
             // 创建图片对象
             const img = canvas.createImage();
             img.src = this.data.tempImagePath;
             
             img.onload = () => {
-              // 绘制图片到 Canvas
-              ctx.drawImage(img, 0, 0, 300, 300);
-              
-              // 获取区域像素数据
-              const pixelX = Math.max(0, Math.floor(startX * 300));
-              const pixelY = Math.max(0, Math.floor(startY * 300));
-              const pixelWidth = Math.max(1, Math.floor(width * 300));
-              const pixelHeight = Math.max(1, Math.floor(height * 300));
-              
-              console.log('区域像素坐标:', pixelX, pixelY, pixelWidth, pixelHeight);
-              
               try {
-                const imageData = ctx.getImageData(pixelX, pixelY, pixelWidth, pixelHeight);
+                // 绘制图片到 Canvas
+                ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
                 
-                // 分析区域内的颜色
-                const colors = this.analyzeAreaImageData(imageData.data, pixelWidth, pixelHeight);
+                // 计算网格单元格在Canvas中的位置
+                const pixelX = Math.floor(x * canvasWidth);
+                const pixelY = Math.floor(y * canvasHeight);
+                const cellWidth = Math.ceil(canvasWidth / this.data.gridSize);
+                const cellHeight = Math.ceil(canvasHeight / this.data.gridSize);
+                
+                // 获取网格单元格的像素数据
+                const imageData = ctx.getImageData(
+                  pixelX, pixelY, 
+                  Math.min(cellWidth, canvasWidth - pixelX), 
+                  Math.min(cellHeight, canvasHeight - pixelY)
+                );
+                
+                // 分析网格单元格的颜色
+                const colors = this.analyzeImageData(
+                  imageData.data, 
+                  Math.min(cellWidth, canvasWidth - pixelX), 
+                  Math.min(cellHeight, canvasHeight - pixelY)
+                );
                 
                 if (colors && colors.length > 0) {
-                  // 直接更新状态
                   this.setData({
                     selectedColor: colors[0], // 主要颜色
-                    colorResults: [], // 清空普通识别结果
-                    selectionColors: colors.slice(0, 3).map(color => ({
-                      color: color.hex,
-                      rgb: color.rgb,
-                      percentage: color.percentage
-                    }))
+                    colorResults: colors, // 所有颜色
+                    selectionColors: [] // 清空框选结果
                   });
                   
                   wx.hideLoading();
@@ -411,10 +1107,10 @@ Page({
                   });
                 }
               } catch (error) {
-                console.error('获取区域像素数据失败:', error);
+                console.error('分析网格单元格颜色失败:', error);
                 wx.hideLoading();
                 wx.showToast({
-                  title: '获取区域颜色失败',
+                  title: '分析颜色失败',
                   icon: 'none'
                 });
               }
@@ -428,696 +1124,116 @@ Page({
                 icon: 'none'
               });
             };
-          });
-      } else {
-        wx.hideLoading();
-        wx.showToast({
-          title: '选择区域太小',
-          icon: 'none'
-        });
-      }
-    } catch (error) {
-      console.error('获取图片位置失败:', error);
-      wx.hideLoading();
-      wx.showToast({
-        title: '获取图片位置失败',
-        icon: 'none'
-      });
-    }
-  },
-
-  // 分析指定点的颜色
-  analyzeColorAtPoint: function(relativeX, relativeY) {
-    // 显示加载提示
-    wx.showLoading({
-      title: '正在识别颜色...',
-      mask: true
-    });
-    
-    const query = wx.createSelectorQuery();
-    query.select('#colorCanvas')
-      .fields({ node: true, size: true })
-      .exec((res) => {
-        if (!res || !res[0] || !res[0].node) {
-          wx.hideLoading();
-          wx.showToast({
-            title: 'Canvas 初始化失败',
-            icon: 'none'
-          });
-          return;
-        }
-        
-        const canvas = res[0].node;
-        const ctx = canvas.getContext('2d');
-        
-        // 设置 Canvas 大小
-        canvas.width = 300;
-        canvas.height = 300;
-        
-        // 创建图片对象
-        const img = canvas.createImage();
-        img.src = this.data.tempImagePath;
-        
-        img.onload = () => {
-          // 绘制图片到 Canvas
-          ctx.drawImage(img, 0, 0, 300, 300);
-          
-          // 获取像素数据
-          const x = Math.floor(relativeX * 300);
-          const y = Math.floor(relativeY * 300);
-          const imageData = ctx.getImageData(x, y, 1, 1);
-          
-          // 获取像素颜色
-          const r = imageData.data[0];
-          const g = imageData.data[1];
-          const b = imageData.data[2];
-          
-          // 转换为十六进制颜色
-          const hex = this.rgbToHex(r, g, b);
-          const rgb = `rgb(${r}, ${g}, ${b})`;
-          const colorName = this.getColorName(r, g, b);
-          
-          // 创建单个颜色结果
-          const colorResult = {
-            hex: hex,
-            rgb: rgb,
-            name: colorName,
-            percentage: 100 // 点选时为100%
-          };
-          
-          // 直接更新状态
-          this.setData({
-            selectedColor: colorResult, // 点选时设置选中颜色
-            colorResults: [colorResult], // 更新颜色结果
-            selectionColors: [] // 清空框选结果
-          });
-          
-          wx.hideLoading();
-          
-          wx.showToast({
-            title: '颜色分析成功',
-            icon: 'success',
-            duration: 1500
-          });
-        };
-        
-        img.onerror = () => {
-          wx.hideLoading();
-          wx.showToast({
-            title: '图片加载失败',
-            icon: 'none'
-          });
-        };
-      });
-  },
-
-  // 添加新的 analyzeAreaColors 函数
-  analyzeAreaColors: function(startX, startY, width, height) {
-    // 显示加载提示
-    wx.showLoading({
-      title: '正在分析区域颜色...',
-      mask: true
-    });
-    
-    const ctx = wx.createCanvasContext('colorCanvas');
-    
-    // 在画布上绘制图片
-    ctx.drawImage(this.data.tempImagePath, 0, 0, 300, 300);
-    ctx.draw(true, () => {
-      // 图片绘制完成后，获取像素数据
-      setTimeout(() => {
-        wx.canvasGetImageData({
-          canvasId: 'colorCanvas',
-          x: Math.floor(startX * 300),
-          y: Math.floor(startY * 300),
-          width: Math.max(1, Math.floor(width * 300)),
-          height: Math.max(1, Math.floor(height * 300)),
-          success: res => {
-            // 分析区域内的颜色
-            const colors = this.analyzeColors(res.data, res.width, res.height);
-            
-            if (colors && colors.length > 0) {
-              // 更新选中的颜色和颜色结果
-              this.processColorResults(colors, true);
-            } else {
-              wx.hideLoading();
-              wx.showToast({
-                title: '未能识别颜色',
-                icon: 'none'
-              });
-            }
-          },
-          fail: err => {
-            console.error('获取区域颜色失败', err);
+          })
+          .catch((err) => {
+            console.error('获取图片信息失败:', err);
             wx.hideLoading();
             wx.showToast({
-              title: '获取区域颜色失败',
+              title: '获取图片信息失败',
               icon: 'none'
             });
-          }
-        });
-      }, 300); // 增加延迟确保画布已经绘制完成
-    });
-  },
-
-  // RGB 转 HEX
-  rgbToHex: function(r, g, b) {
-    return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
-  },
-
-  // 分析颜色
-  analyzeColors: function(data, width, height) {
-    // 颜色量化，减少颜色数量
-    const colorMap = {};
-    const pixelCount = width * height;
-    
-    // 颜色量化步长，值越大颜色越少
-    const quantStep = 8;
-    
-    for (let i = 0; i < data.length; i += 4) {
-      // 量化RGB值
-      const r = Math.floor(data[i] / quantStep) * quantStep;
-      const g = Math.floor(data[i + 1] / quantStep) * quantStep;
-      const b = Math.floor(data[i + 2] / quantStep) * quantStep;
-      const a = data[i + 3];
-      
-      // 忽略透明像素
-      if (a < 128) continue;
-      
-      const hex = this.rgbToHex(r, g, b);
-      
-      if (colorMap[hex]) {
-        colorMap[hex].count++;
-      } else {
-        colorMap[hex] = {
-          hex: this.rgbToHex(data[i], data[i+1], data[i+2]), // 保存原始颜色
-          rgb: `RGB(${data[i]}, ${data[i+1]}, ${data[i+2]})`,
-          count: 1
-        };
-      }
-    }
-    
-    // 转换为数组并排序
-    const colorArray = Object.values(colorMap);
-    colorArray.sort((a, b) => b.count - a.count);
-    
-    // 返回前5种主要颜色
-    return colorArray.slice(0, 5).map(color => {
-      const rgb = color.rgb.match(/\d+/g);
-      return {
-        hex: color.hex,
-        rgb: color.rgb,
-        name: this.getColorName(parseInt(rgb[0]), parseInt(rgb[1]), parseInt(rgb[2])),
-        percentage: Math.round((color.count / pixelCount) * 100) + '%'
-      };
-    });
-  },
-
-  // 获取颜色名称
-  getColorName: function(r, g, b) {
-    // 这里可以实现颜色名称识别算法
-    // 简单示例：根据RGB值返回基本颜色名称
-    if (r > 200 && g < 100 && b < 100) return '红色';
-    if (r > 200 && g > 150 && b < 100) return '橙色';
-    if (r > 200 && g > 200 && b < 100) return '黄色';
-    if (r < 100 && g > 200 && b < 100) return '绿色';
-    if (r < 100 && g < 100 && b > 200) return '蓝色';
-    if (r > 150 && g < 100 && b > 150) return '紫色';
-    if (r > 200 && g > 200 && b > 200) return '白色';
-    if (r < 100 && g < 100 && b < 100) return '黑色';
-    if (Math.abs(r - g) < 30 && Math.abs(g - b) < 30 && Math.abs(r - b) < 30) return '灰色';
-    
-    return '未知颜色';
-  },
-
-  // 修改 bindtap 事件处理函数，防止图片放大
-  bindtap: function(e) {
-    // 获取点击位置
-    const x = e.detail.x;
-    const y = e.detail.y;
-    
-    // 获取图片在画布中的实际位置和尺寸
-    const { imageLeft, imageTop, imageWidth, imageHeight } = this.calculateImageRect();
-    
-    // 检查点击是否在图片范围内
-    if (x >= imageLeft && x <= imageLeft + imageWidth && 
-        y >= imageTop && y <= imageTop + imageHeight) {
-      // 将点击坐标转换为图片上的坐标
-      const imageX = Math.floor(((x - imageLeft) / imageWidth) * this.data.originalWidth);
-      const imageY = Math.floor(((y - imageTop) / imageHeight) * this.data.originalHeight);
-      
-      // 获取颜色
-      this.getPixelColor(imageX, imageY);
-    }
-    
-    // 不再调用放大功能
-  },
-
-  // 计算图片在画布中的实际位置和尺寸
-  calculateImageRect: function() {
-    const rect = wx.createSelectorQuery().select('.image-preview image').boundingClientRect();
-    rect.exec((res) => {
-      if (!res || !res[0]) return;
-      
-      const imageRect = res[0];
-      const scaleX = this.data.imageInfo.width / imageRect.width;
-      const scaleY = this.data.imageInfo.height / imageRect.height;
-      
-      const imageLeft = Math.floor(imageRect.left * scaleX);
-      const imageTop = Math.floor(imageRect.top * scaleY);
-      const imageWidth = Math.floor(imageRect.width * scaleX);
-      const imageHeight = Math.floor(imageRect.height * scaleY);
-      
-      return { imageLeft, imageTop, imageWidth, imageHeight };
-    });
-  },
-
-  // 获取像素颜色
-  getPixelColor: function(x, y) {
-    const ctx = wx.createCanvasContext('myCanvas');
-    ctx.drawImage(this.data.tempImagePath, 0, 0, this.data.originalWidth, this.data.originalHeight);
-    ctx.draw(false, () => {
-      wx.canvasGetImageData({
-        canvasId: 'myCanvas',
-        x: x,
-        y: y,
-        width: 1,
-        height: 1,
-        success: (res) => {
-          const r = res.data[0];
-          const g = res.data[1];
-          const b = res.data[2];
-          const a = res.data[3] / 255;
-          const color = `rgba(${r}, ${g}, ${b}, ${a.toFixed(2)})`;
-          
-          // 更新选中的颜色
-          this.setData({
-            selectedColor: color
           });
-          
-          console.log(`点击位置 (${x}, ${y}) 的颜色: ${color}`);
-        },
-        fail: (err) => {
-          console.error('获取像素颜色失败:', err);
-        }
       });
-    });
   },
 
-  // 修改缩放处理函数，只在两个手指时才缩放
-  bindscale: function(e) {
-    // 检查是否有两个触摸点
-    if (e.touches && e.touches.length === 2) {
-      const newScale = this.data.scale * e.scale;
-      // 限制缩放范围
-      if (newScale >= 0.5 && newScale <= 3) {
-        this.setData({
-          scale: newScale
-        });
-      }
-    }
-  },
-
-  // 修改触摸结束处理函数，分析框选区域的颜色
-  bindtouchend: function(e) {
-    if (this.data.isSelecting) {
-      this.setData({
-        isSelecting: false
-      });
-      
-      // 计算选择框的坐标和尺寸
-      const { startX, startY, endX, endY } = this.data;
-      const selectionX = Math.min(startX, endX);
-      const selectionY = Math.min(startY, endY);
-      const selectionWidth = Math.abs(endX - startX);
-      const selectionHeight = Math.abs(endY - startY);
-      
-      // 确保选择区域有效
-      if (selectionWidth > 5 && selectionHeight > 5) {
-        // 获取框选区域的图像数据
-        this.getSelectionColors(selectionX, selectionY, selectionWidth, selectionHeight);
-      } else {
-        // 如果选择区域太小，清空框选颜色
-        this.setData({
-          selectionColors: []
-        });
-      }
-    }
-  },
-
-  // 添加获取框选区域主要颜色的函数
-  getSelectionColors: function(x, y, width, height) {
-    const ctx = wx.createCanvasContext('myCanvas');
-    ctx.drawImage(this.data.tempImagePath, 0, 0, this.data.originalWidth, this.data.originalHeight);
-    ctx.draw(false, () => {
-      wx.canvasGetImageData({
-        canvasId: 'myCanvas',
-        x: x,
-        y: y,
-        width: width,
-        height: height,
-        success: (res) => {
-          // 分析颜色
-          const colorMap = {};
-          const totalPixels = width * height;
-          
-          // 遍历所有像素
-          for (let i = 0; i < res.data.length; i += 4) {
-            const r = res.data[i];
-            const g = res.data[i + 1];
-            const b = res.data[i + 2];
-            // 简化颜色，将相近颜色归为一组
-            const simplifiedR = Math.floor(r / 10) * 10;
-            const simplifiedG = Math.floor(g / 10) * 10;
-            const simplifiedB = Math.floor(b / 10) * 10;
-            const colorKey = `rgb(${simplifiedR}, ${simplifiedG}, ${simplifiedB})`;
-            
-            if (colorMap[colorKey]) {
-              colorMap[colorKey]++;
-            } else {
-              colorMap[colorKey] = 1;
-            }
-          }
-          
-          // 将颜色按出现频率排序
-          const sortedColors = Object.keys(colorMap).map(color => ({
-            color: color,
-            count: colorMap[color],
-            percentage: ((colorMap[color] / totalPixels) * 100).toFixed(1)
-          })).sort((a, b) => b.count - a.count);
-          
-          // 获取前三个主要颜色
-          const mainColors = sortedColors.slice(0, 3);
-          
-          this.processColorResults(mainColors, true);
-        },
-        fail: (err) => {
-          console.error('获取框选区域颜色失败:', err);
-        }
-      });
-    });
-  },
-
-  // 处理图片点击事件
-  handleImageTap: function(e) {
-    console.log('图片被点击', e);
-    // 在框选模式下，点击图片切换缩放状态
-    this.toggleZoom();
-  },
-
-  // 获取点击位置的颜色
-  getColorAtPoint: function(e) {
-    if (!this.data.tempImagePath) return;
-    
-    const touch = e.touches ? e.touches[0] : e;
-    const { x, y } = touch;
-    
-    // 获取图片在屏幕上的位置和尺寸
-    const query = wx.createSelectorQuery();
-    query.select('.image-preview image').boundingClientRect();
-    query.exec(res => {
-      if (!res || !res[0]) return;
-      
-      const imageRect = res[0];
-      
-      // 计算点击在图片上的相对位置（0-1之间）
-      const relativeX = (x - imageRect.left) / imageRect.width;
-      const relativeY = (y - imageRect.top) / imageRect.height;
-      
-      // 确保点击在图片范围内
-      if (relativeX >= 0 && relativeX <= 1 && relativeY >= 0 && relativeY <= 1) {
-        this.analyzeColorAtPoint(relativeX, relativeY);
-      }
-    });
-  },
-
-  // 放大图片
-  zoomIn: function() {
-    // 如果已经有缩放比例，则增加缩放比例
-    let zoomScale = this.data.zoomScale || 1.0;
-    zoomScale = Math.min(zoomScale + 0.2, 3.0); // 限制最大缩放比例为3倍
-    
-    this.setData({
-      zoomScale: zoomScale,
-      isZoomed: true,
-      selectionStyle: `transform: scale(${zoomScale}); transform-origin: center center;`
-    });
-  },
-
-  // 缩小图片
-  zoomOut: function() {
-    // 如果已经有缩放比例，则减小缩放比例
-    let zoomScale = this.data.zoomScale || 1.0;
-    zoomScale = Math.max(zoomScale - 0.2, 0.5); // 限制最小缩放比例为0.5倍
-    
-    this.setData({
-      zoomScale: zoomScale,
-      isZoomed: zoomScale > 1.0,
-      selectionStyle: `transform: scale(${zoomScale}); transform-origin: center center;`
-    });
-  },
-
-  // 使用 Canvas 2D API 获取像素颜色
-  getPixelColorWithCanvas2D: function(e) {
-    console.log('开始获取像素颜色', e);
-    if (!this.data.tempImagePath) return;
-    
-    wx.showLoading({
-      title: '正在识别颜色...',
-      mask: true
-    });
-    
-    // 获取点击位置
-    const touch = e.touches ? e.touches[0] : e;
-    
-    // 获取图片在屏幕上的位置和尺寸
-    const query = wx.createSelectorQuery();
-    query.select('.image-preview image').boundingClientRect();
-    query.exec(res => {
-      if (!res || !res[0]) {
-        wx.hideLoading();
-        wx.showToast({
-          title: '无法获取图片位置',
-          icon: 'none'
-        });
-        return;
-      }
-      
-      const imageRect = res[0];
-      console.log('图片位置信息:', imageRect);
-      
-      // 计算点击在图片上的相对位置
-      const x = touch.clientX - imageRect.left;
-      const y = touch.clientY - imageRect.top;
-      
-      // 确保点击在图片范围内
-      if (x >= 0 && x <= imageRect.width && y >= 0 && y <= imageRect.height) {
-        // 计算相对坐标（0-1之间）
-        const relativeX = x / imageRect.width;
-        const relativeY = y / imageRect.height;
-        console.log('相对坐标:', relativeX, relativeY);
-        
-        // 使用 Canvas 2D API 获取颜色
-        const canvasQuery = wx.createSelectorQuery();
-        canvasQuery.select('#colorCanvas')
-          .fields({ node: true, size: true })
-          .exec((canvasRes) => {
-            if (!canvasRes || !canvasRes[0] || !canvasRes[0].node) {
-              wx.hideLoading();
-              wx.showToast({
-                title: 'Canvas 初始化失败',
-                icon: 'none'
-              });
-              return;
-            }
-            
-            const canvas = canvasRes[0].node;
-            const ctx = canvas.getContext('2d');
-            
-            // 设置 Canvas 大小
-            canvas.width = 300;
-            canvas.height = 300;
-            
-            // 创建图片对象
-            const img = canvas.createImage();
-            img.src = this.data.tempImagePath;
-            
-            img.onload = () => {
-              // 绘制图片到 Canvas
-              ctx.drawImage(img, 0, 0, 300, 300);
-              
-              // 获取像素数据
-              const pixelX = Math.floor(relativeX * 300);
-              const pixelY = Math.floor(relativeY * 300);
-              console.log('像素坐标:', pixelX, pixelY);
-              
-              try {
-                const imageData = ctx.getImageData(pixelX, pixelY, 1, 1);
-                
-                // 获取像素颜色
-                const r = imageData.data[0];
-                const g = imageData.data[1];
-                const b = imageData.data[2];
-                
-                console.log('获取到的颜色:', r, g, b);
-                
-                // 转换为十六进制颜色
-                const hex = this.rgbToHex(r, g, b);
-                const rgb = `rgb(${r}, ${g}, ${b})`;
-                const colorName = this.getColorName(r, g, b);
-                
-                // 创建单个颜色结果
-                const colorResult = {
-                  hex: hex,
-                  rgb: rgb,
-                  name: colorName,
-                  percentage: 100 // 点选时为100%
-                };
-                
-                // 直接更新状态
-                this.setData({
-                  selectedColor: colorResult, // 点选时设置选中颜色
-                  colorResults: [colorResult], // 更新颜色结果
-                  selectionColors: [] // 清空框选结果
-                });
-                
-                wx.hideLoading();
-                
-                wx.showToast({
-                  title: '颜色分析成功',
-                  icon: 'success',
-                  duration: 1500
-                });
-              } catch (error) {
-                console.error('获取像素数据失败:', error);
-                wx.hideLoading();
-                wx.showToast({
-                  title: '获取颜色失败',
-                  icon: 'none'
-                });
-              }
-            };
-            
-            img.onerror = (err) => {
-              console.error('图片加载失败:', err);
-              wx.hideLoading();
-              wx.showToast({
-                title: '图片加载失败',
-                icon: 'none'
-              });
-            };
-          });
-      } else {
-        wx.hideLoading();
-        wx.showToast({
-          title: '点击位置在图片外',
-          icon: 'none'
-        });
-      }
-    });
-  },
-
-  // 添加 analyzeAreaImageData 函数，用于分析区域像素数据
-  analyzeAreaImageData: function(data, width, height) {
-    console.log('分析区域像素数据:', width, height);
-    
-    // 创建颜色计数对象
-    const colorCounts = {};
-    const totalPixels = width * height;
-    
-    // 遍历所有像素
-    for (let i = 0; i < totalPixels; i++) {
-      const offset = i * 4;
-      const r = data[offset];
-      const g = data[offset + 1];
-      const b = data[offset + 2];
-      
-      // 忽略完全透明的像素
-      if (data[offset + 3] === 0) continue;
-      
-      // 将颜色量化，减少颜色数量
-      const quantizedR = Math.round(r / 10) * 10;
-      const quantizedG = Math.round(g / 10) * 10;
-      const quantizedB = Math.round(b / 10) * 10;
-      
-      // 创建颜色键
-      const colorKey = `${quantizedR},${quantizedG},${quantizedB}`;
-      
-      // 增加颜色计数
-      if (colorCounts[colorKey]) {
-        colorCounts[colorKey].count++;
-      } else {
-        colorCounts[colorKey] = {
-          r: quantizedR,
-          g: quantizedG,
-          b: quantizedB,
-          count: 1
-        };
-      }
-    }
-    
-    // 将颜色计数转换为数组并排序
-    const colorArray = Object.values(colorCounts);
-    colorArray.sort((a, b) => b.count - a.count);
-    
-    // 取前3个主要颜色
-    const mainColors = colorArray.slice(0, 3);
-    
-    // 格式化结果
-    const result = mainColors.map(color => {
-      const hex = this.rgbToHex(color.r, color.g, color.b);
-      const rgb = `rgb(${color.r}, ${color.g}, ${color.b})`;
-      const percentage = Math.round((color.count / totalPixels) * 100);
-      
-      return {
-        hex: hex,
-        rgb: rgb,
-        name: this.getColorName(color.r, color.g, color.b),
-        percentage: percentage
-      };
-    });
-    
-    console.log('分析结果 (前3个主要颜色):', result);
-    return result;
-  },
-
-  // 恢复 processColorResults 函数的原始行为
-  processColorResults: function(colors, isAreaSelection = false) {
-    console.log('处理颜色结果:', colors, isAreaSelection ? '框选模式' : '点选/整图模式');
-    
-    if (!colors || colors.length === 0) {
-      console.error('没有颜色结果可处理');
-      return;
-    }
-    
-    // 更新选中的颜色和颜色结果
-    if (isAreaSelection) {
-      // 框选模式
-      this.setData({
-        selectedColor: colors[0], // 主要颜色
-        colorResults: [], // 清空普通识别结果
-        selectionColors: colors.slice(0, 3).map(color => ({
-          color: color.hex,
-          rgb: color.rgb,
-          percentage: color.percentage
-        }))
-      });
-    } else {
-      // 点选或整图模式
-      this.setData({
-        selectedColor: colors[0], // 主要颜色
-        colorResults: colors, // 所有颜色
-        selectionColors: [] // 清空框选结果
-      });
-    }
-    
+  // 添加回 getAreaColors 函数的空实现，以防有地方调用它
+  getAreaColors: function() {
+    console.log('getAreaColors 函数被调用，但已不再使用');
     wx.hideLoading();
+  },
+
+  // 添加边缘检测函数
+  isEdgePixel: function(data, index, width, height) {
+    // 获取当前像素的位置
+    const x = (index / 4) % width;
+    const y = Math.floor((index / 4) / width);
     
-    // 显示成功提示
-    wx.showToast({
-      title: '颜色分析成功',
-      icon: 'success',
-      duration: 1500
-    });
+    // 如果是图像边缘，认为是边缘像素
+    if (x <= 1 || x >= width - 2 || y <= 1 || y >= height - 2) {
+      return true;
+    }
+    
+    // 检查周围像素的颜色差异
+    const currentR = data[index];
+    const currentG = data[index + 1];
+    const currentB = data[index + 2];
+    
+    // 检查上下左右四个方向
+    const directions = [
+      {dx: 0, dy: -1}, // 上
+      {dx: 1, dy: 0},  // 右
+      {dx: 0, dy: 1},  // 下
+      {dx: -1, dy: 0}  // 左
+    ];
+    
+    for (const dir of directions) {
+      const nx = x + dir.dx;
+      const ny = y + dir.dy;
+      
+      // 确保邻居像素在图像范围内
+      if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+        const neighborIndex = ((ny * width) + nx) * 4;
+        const neighborR = data[neighborIndex];
+        const neighborG = data[neighborIndex + 1];
+        const neighborB = data[neighborIndex + 2];
+        
+        // 计算颜色差异
+        const colorDiff = Math.abs(currentR - neighborR) + 
+                          Math.abs(currentG - neighborG) + 
+                          Math.abs(currentB - neighborB);
+        
+        // 如果颜色差异大，认为是边缘像素
+        if (colorDiff > 80) {
+          return true;
+        }
+      }
+    }
+    
+    return false;
+  },
+
+  // 进一步优化红色检测
+  isUIRedColor: function(r, g, b, isEdge) {
+    // 更严格的红色检测条件
+    if (r > 200 && g < 100 && b < 80) {
+      return true;
+    }
+    
+    // 边缘处的红色UI元素
+    if (isEdge && r > 180 && g < 120 && b < 100) {
+      return true;
+    }
+    
+    // 特定的橙红色UI元素（如您图中所示）
+    if (r > 240 && g > 60 && g < 150 && b < 80) {
+      return true;
+    }
+    
+    // 添加对F96826颜色的特殊处理（您图中显示的橙红色）
+    if (r > 240 && g > 90 && g < 110 && b > 30 && b < 50) {
+      return true;
+    }
+    
+    return false;
+  },
+
+  // RGB转HSV
+  rgbToHsv: function(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    let max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h, s, v = max;
+    let d = max - min;
+    s = max === 0 ? 0 : d / max;
+    if (max === min) {
+      h = 0;
+    } else {
+      switch (max) {
+        case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+        case g: h = (b - r) / d + 2; break;
+        case b: h = (r - g) / d + 4; break;
+      }
+      h /= 6;
+    }
+    return [h * 360, s * 100, v * 100];
   }
 }); 

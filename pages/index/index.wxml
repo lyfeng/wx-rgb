@@ -8,52 +8,29 @@
     <view class="image-preview">
       <image wx:if="{{tempImagePath}}" 
              src="{{tempImagePath}}" 
-             mode="{{isZoomed ? 'widthFix' : 'aspectFit'}}" 
+             mode="aspectFit" 
              bindtap="handleImageTap"
-             bindtouchstart="touchStart"
-             bindtouchmove="touchMove"
-             bindtouchend="touchEnd"
-             style="{{selectionStyle}}"></image>
+             bindload="onImageLoad"></image>
       
-      <!-- 简化的遮罩层实现 -->
-      <view wx:if="{{tempImagePath && isSelecting}}" class="selection-overlay">
-        <view class="overlay-top" style="height: {{selectionTop}}px;"></view>
-        <view class="overlay-middle">
-          <view class="overlay-left" style="width: {{selectionLeft}}px;"></view>
-          <view class="selection-area" style="width: {{selectionWidth}}px; height: {{selectionHeight}}px;"></view>
-          <view class="overlay-right" style="width: calc(100% - {{selectionLeft + selectionWidth}}px);"></view>
-        </view>
-        <view class="overlay-bottom" style="height: calc(100% - {{selectionTop + selectionHeight}}px);"></view>
+      <!-- 网格覆盖层 -->
+      <view class="grid-overlay" wx:if="{{tempImagePath && gridCells.length > 0}}">
+        <block wx:for="{{gridCells}}" wx:key="id">
+          <view class="grid-cell" 
+                style="left: {{item.x}}px; top: {{item.y}}px; width: {{item.width}}px; height: {{item.height}}px;"
+                data-x="{{item.relativeX}}" 
+                data-y="{{item.relativeY}}"
+                catchtap="selectGridCell"></view>
+        </block>
       </view>
       
-      <view wx:if="{{tempImagePath && isSelecting}}" class="selection-box" style="{{selectionBoxStyle}}">
-        <text wx:if="{{Math.abs(endX - startX) > 50 && Math.abs(endY - startY) > 50}}" 
-              style="color: white; font-size: 12px; text-shadow: 0 0 2px black;">
-          正在选择区域
-        </text>
-      </view>
-      
-      <!-- 长按提示 -->
-      <view wx:if="{{tempImagePath && !isSelecting}}" class="long-press-hint">
-        <text>长按图片并拖动可框选区域识别颜色</text>
-      </view>
-      
-      <view wx:if="{{tempImagePath && selectionMode === 'area' && !isSelecting}}" class="selection-hint">
-        <text>长按并拖动以框选区域</text>
-      </view>
-      <view wx:else class="placeholder">
-        <text>请上传或拍摄图片</text>
-      </view>
-      
-      <!-- 添加放大缩小控制按钮 -->
-      <view wx:if="{{tempImagePath}}" class="zoom-controls">
-        <view class="zoom-btn zoom-in" bindtap="zoomIn">
-          <text>+</text>
-        </view>
-        <view class="zoom-btn zoom-out" bindtap="zoomOut">
-          <text>-</text>
-        </view>
-      </view>
+      <!-- 选中的网格单元格 -->
+      <view wx:if="{{tempImagePath && selectedGridCell}}" class="selected-grid-cell"
+            style="left: {{selectedGridCell.x}}px; top: {{selectedGridCell.y}}px; width: {{selectedGridCell.width}}px; height: {{selectedGridCell.height}}px;"></view>
+    </view>
+    
+    <!-- 网格提示 -->
+    <view wx:if="{{tempImagePath}}" class="long-press-hint">
+      <text>点击网格单元格可识别该区域颜色</text>
     </view>
     
     <!-- 操作按钮区域 -->
@@ -62,38 +39,28 @@
       <button class="btn" bindtap="takePhoto">拍摄照片</button>
     </view>
     
-    <!-- 选中区域颜色信息 -->
-    <view class="selected-color" wx:if="{{selectedColor}}">
-      <text class="section-title">选中颜色</text>
-      <view class="color-item">
-        <view class="color-block" style="background-color: {{selectedColor.hex}}"></view>
-        <view class="color-info">
-          <text class="color-hex" bindtap="copyText" data-text="{{selectedColor.hex}}">{{selectedColor.hex}}</text>
-          <text class="color-rgb" bindtap="copyText" data-text="{{selectedColor.rgb}}">{{selectedColor.rgb}}</text>
-          <text wx:if="{{selectedColor.name}}" class="color-name" bindtap="copyText" data-text="{{selectedColor.name}}">{{selectedColor.name}}</text>
-        </view>
+    <!-- 在操作按钮区域下方添加算法选择选项卡 -->
+    <view class="algorithm-tabs" wx:if="{{tempImagePath}}">
+      <view class="tab {{currentAlgorithm === 'frequency' ? 'active' : ''}}" 
+            bindtap="switchAlgorithm" data-algorithm="frequency">
+        频率统计
+      </view>
+      <view class="tab {{currentAlgorithm === 'kmeans' ? 'active' : ''}}" 
+            bindtap="switchAlgorithm" data-algorithm="kmeans">
+        K-Means聚类
+      </view>
+      <view class="tab {{currentAlgorithm === 'median' ? 'active' : ''}}" 
+            bindtap="switchAlgorithm" data-algorithm="median">
+        中位切分
       </view>
     </view>
     
-    <!-- 合并后的颜色结果展示区域 -->
-    <view class="color-results" wx:if="{{colorResults.length > 0 || selectionColors.length > 0}}">
-      <text class="section-title">{{selectionColors.length > 0 ? '框选区域颜色' : '识别结果'}}</text>
-      
-      <!-- 框选颜色结果 -->
-      <view class="colors-container" wx:if="{{selectionColors.length > 0}}">
-        <view class="color-item" wx:for="{{selectionColors}}" wx:key="index">
-          <view class="color-rank">{{index + 1}}</view>
-          <view class="color-block" style="background-color: {{item.color}}"></view>
-          <view class="color-info">
-            <text class="color-hex" bindtap="copyText" data-text="{{item.color}}">{{item.color}}</text>
-            <text wx:if="{{item.rgb}}" class="color-rgb" bindtap="copyText" data-text="{{item.rgb}}">{{item.rgb}}</text>
-            <text class="color-percentage">占比: {{item.percentage}}%</text>
-          </view>
-        </view>
-      </view>
+    <!-- 颜色结果展示区域 -->
+    <view class="color-results" wx:if="{{colorResults.length > 0}}">
+      <text class="section-title">识别结果</text>
       
       <!-- 普通识别颜色结果 -->
-      <view class="colors-container" wx:else>
+      <view class="colors-container">
         <view class="color-item" wx:for="{{colorResults}}" wx:key="index">
           <view class="color-block" style="background-color: {{item.hex}}"></view>
           <view class="color-info">
